@@ -10,6 +10,10 @@ from semantic_kernel.kernel_pydantic import KernelBaseModel
 
 PromptExecutionSettingsT = TypeVar("PromptExecutionSettingsT", bound=PromptExecutionSettings)
 
+# TODO: Add support for "template_format" property. Will only support semantic-kernel for now.
+# TODO: Add support for "output_variable" property.
+# TODO: Add support for the "template" property. This will be a string that contains the template to be used for the prompt.
+# TODO: Add support for "execution_settings" property.
 
 class PromptTemplateConfig(KernelBaseModel, Generic[PromptExecutionSettingsT]):
     schema_: int = Field(default=1, alias="schema")

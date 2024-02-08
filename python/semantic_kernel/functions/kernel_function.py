@@ -13,6 +13,7 @@ from pydantic import Field, StringConstraints
 
 
 from semantic_kernel.kernel_pydantic import KernelBaseModel
+from semantic_kernel.prompt_template.prompt_template_config import PromptTemplateConfig
 
 if sys.version_info >= (3, 9):
     from typing import Annotated
@@ -357,7 +358,7 @@ class KernelFunction(KernelBaseModel):
         )
     
     @staticmethod
-    def from_prompt_yaml(text: str, plugin_name: str, function_name: str) -> "KernelFunction":
+    def from_prompt_yaml(text: str) -> "KernelFunction":
         """
         Creates a KernelFunction instance from YAML text.
 
@@ -369,14 +370,14 @@ class KernelFunction(KernelBaseModel):
         Returns:
             KernelFunction: The kernel function.
         """
-        # Convert YAML text to SemanticFunctionConfig object
-        function_config_data: Dict[str, Any] = yaml.safe_load(text)
-        function_config: SemanticFunctionConfig = SemanticFunctionConfig(**function_config_data)
-
-        if function_config is None:
-            raise ValueError("Function configuration cannot be `None`")
         
-        semantic_function_params: List[KernelParameterMetadata] = _get_kernel_parameter_metadata_from_config(function_config)
+        prompt_template_config = PromptTemplateConfig.from_dict(yaml.safe_load(text))
+        
+        if prompt_template_config is None:
+            raise ValueError("PromptTemplateConfig cannot be `None`")
+        
+        # semantic_function_params: List[KernelParameterMetadata] = _get_kernel_parameter_metadata_from_config(function_config)
+        prompt_template_config.parameters
 
         return KernelFunction(
             function_name=function_name,
