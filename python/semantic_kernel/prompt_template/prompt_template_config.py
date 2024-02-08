@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 import json
-import yaml
 from typing import Generic, List, TypeVar
 
 from pydantic import Field
@@ -54,10 +53,6 @@ class PromptTemplateConfig(KernelBaseModel, Generic[PromptExecutionSettingsT]):
     @classmethod
     def from_json(cls, json_str: str) -> "PromptTemplateConfig":
         return cls.from_dict(json.loads(json_str))
-    
-    @classmethod
-    def from_yaml(cls, yaml_str: str) -> "PromptTemplateConfig":
-        return cls.from_dict(yaml.safe_load(yaml_str))
 
     @classmethod
     def from_execution_settings(cls, **kwargs) -> "PromptTemplateConfig":

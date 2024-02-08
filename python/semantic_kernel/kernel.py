@@ -879,13 +879,10 @@ class Kernel(KernelBaseModel):
     
     def create_function_from_prompt_yaml(
         self,
-        text: str,
-        plugin_name: Optional[str] = None,
-        function_name: Optional[str] = None,
+        text: str
     ) -> "KernelFunction":
         # TODO: Should the logger from kernel.py be passed in here to be used in the _invoke_completion functions?
-        kernel_function = KernelFunction.from_prompt_yaml(text, plugin_name, function_name)
-        return kernel_function
+        return KernelFunction.from_prompt_yaml(text)
 
     def create_semantic_function(
         self,
