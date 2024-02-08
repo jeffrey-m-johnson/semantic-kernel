@@ -853,6 +853,8 @@ class Kernel(KernelBaseModel):
             dir_name = os.path.dirname(directory)
             function_name = os.path.basename(dir_name)
             prompt_path = os.path.join(directory, PROMPT_FILE)
+            
+            
 
             # Continue only if the prompt template exists
             if not os.path.exists(prompt_path):
@@ -865,7 +867,7 @@ class Kernel(KernelBaseModel):
             # Load Prompt Template
             with open(prompt_path, "r") as prompt_file:
                 template = PromptTemplate(prompt_file.read(), self.prompt_template_engine, config)
-
+                
             # Prepare lambda wrapping AI logic
             function_config = SemanticFunctionConfig(config, template)
 
@@ -874,6 +876,16 @@ class Kernel(KernelBaseModel):
         plugin = KernelPlugin(name=plugin_directory_name, functions=functions)
 
         return plugin
+    
+    def create_function_from_prompt_yaml(
+        self,
+        text: str,
+        plugin_name: Optional[str] = None,
+        function_name: Optional[str] = None,
+    ) -> "KernelFunction":
+        # TODO: Should the logger from kernel.py be passed in here to be used in the _invoke_completion functions?
+        kernel_function = KernelFunction.from_prompt_yaml(text, plugin_name, function_name)
+        return kernel_function
 
     def create_semantic_function(
         self,

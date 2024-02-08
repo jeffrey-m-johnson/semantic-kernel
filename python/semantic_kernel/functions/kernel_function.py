@@ -4,11 +4,13 @@ import asyncio
 import logging
 import platform
 import sys
-from functools import wraps
+import yaml
+from functools import wraps, partial
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, AsyncIterable, Callable, Dict, List, Optional, Union
 
 from pydantic import Field, StringConstraints
+
 
 from semantic_kernel.kernel_pydantic import KernelBaseModel
 
@@ -28,6 +30,7 @@ from semantic_kernel.connectors.ai.text_completion_client_base import (
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.streaming_kernel_content import StreamingKernelContent
 from semantic_kernel.functions.function_result import FunctionResult
+from semantic_kernel.functions.functions_yaml.kernel_function_yaml import kernel_function_yaml_constructor
 from semantic_kernel.functions.kernel_arguments import KernelArguments
 from semantic_kernel.functions.kernel_function_metadata import KernelFunctionMetadata
 from semantic_kernel.functions.kernel_parameter_metadata import KernelParameterMetadata
@@ -60,7 +63,112 @@ def store_results(chat_prompt: ChatPromptTemplate, results: List["ChatMessageCon
     )
     return chat_prompt
 
+# TODO: How can we make this private?
+def _get_kernel_parameter_metadata_from_config(function_config: SemanticFunctionConfig) -> List[KernelParameterMetadata]:
+    semantic_function_params = [
+        KernelParameterMetadata(
+            name="function",
+            description="The function to execute",
+            default_value=None,
+            type="KernelFunctionMetadata",
+            required=True,
+            expose=False,
+        ),
+        KernelParameterMetadata(
+            name="kernel",
+            description="The kernel",
+            default_value=None,
+            type="Kernel",
+            required=True,
+            expose=False,
+        ),
+        KernelParameterMetadata(
+            name="client",
+            description="The AI service client",
+            default_value=None,
+            type="AIServiceClientBase",
+            required=True,
+            expose=False,
+        ),
+        KernelParameterMetadata(
+            name="request_settings",
+            description="The request settings",
+            default_value=None,
+            type="PromptExecutionSettings",
+            required=True,
+            expose=False,
+        ),
+        KernelParameterMetadata(
+            name="arguments",
+            description="The kernel arguments",
+            default_value=None,
+            type="KernelArguments",
+            required=True,
+            expose=False,
+        ),
+    ]
+    semantic_function_params.extend(function_config.prompt_template.get_parameters())
+    return semantic_function_params
 
+# TODO: How can we make this private?
+async def _invoke_completion(
+    function: KernelFunctionMetadata,
+    kernel: "Kernel",
+    client: Union[TextCompletionClientBase, ChatCompletionClientBase],
+    request_settings: PromptExecutionSettings,
+    arguments: KernelArguments,
+    function_config: SemanticFunctionConfig,
+    **kwargs: Dict[str, Any],
+) -> "FunctionResult":
+    if client is None:
+        raise ValueError("AI LLM service cannot be `None`")
+    try:
+        if not function_config.has_chat_prompt:
+            prompt = await function_config.prompt_template.render(kernel, arguments)
+            completion = await client.complete(prompt, request_settings)
+            return FunctionResult(function=function, value=completion)
+    except Exception as e:
+        logger.error(f"Error occurred while invoking function {function.name}: {e}")
+        raise e
+
+    messages = await function_config.prompt_template.render_messages(kernel, arguments)
+    try:
+        result = await client.complete_chat(messages, request_settings)
+        return FunctionResult(function=function, value=result)
+    except Exception as exc:
+        logger.error(f"Error occurred while invoking function {function.name}: {exc}")
+        raise exc
+
+# TODO: How can we make this private?
+async def _invoke_stream_completion(
+    function: KernelFunctionMetadata,
+    kernel: "Kernel",
+    client: AIServiceClientBase,
+    request_settings: PromptExecutionSettings,
+    arguments: KernelArguments,
+    function_config: SemanticFunctionConfig,
+    **kwargs: Dict[str, Any],
+) -> AsyncIterable[Union[FunctionResult, List[Union[StreamingKernelContent, Any]]]]:
+    if client is None:
+        raise ValueError("AI LLM service cannot be `None`")
+
+    try:
+        if function_config.has_chat_prompt:
+            messages = await function_config.prompt_template.render_messages(kernel, arguments)
+            async for partial_content in client.complete_chat_stream(
+                messages=messages, settings=request_settings
+            ):
+                yield partial_content
+        else:
+            prompt = await function_config.prompt_template.render(kernel, arguments)
+            async for partial_content in client.complete_stream(prompt, request_settings):
+                yield partial_content
+
+    except Exception as e:
+        logger.error(f"Error occurred while invoking function {function.name}: {e}")
+        raise e
+
+@kernel_function_yaml_constructor
 class KernelFunction(KernelBaseModel):
     """
     Semantic Kernel function.
@@ -228,108 +336,13 @@ class KernelFunction(KernelBaseModel):
         if function_config is None:
             raise ValueError("Function configuration cannot be `None`")
 
-        async def _local_func(
-            function: KernelFunctionMetadata,
-            kernel: "Kernel",
-            client: Union[TextCompletionClientBase, ChatCompletionClientBase],
-            request_settings: PromptExecutionSettings,
-            arguments: KernelArguments,
-            **kwargs: Dict[str, Any],
-        ) -> "FunctionResult":
-            if client is None:
-                raise ValueError("AI LLM service cannot be `None`")
-            try:
-                if not function_config.has_chat_prompt:
-                    prompt = await function_config.prompt_template.render(kernel, arguments)
-                    completion = await client.complete(prompt, request_settings)
-                    return FunctionResult(function=function, value=completion)
-            except Exception as e:
-                logger.error(f"Error occurred while invoking function {function.name}: {e}")
-                raise e
-
-            messages = await function_config.prompt_template.render_messages(kernel, arguments)
-            try:
-                result = await client.complete_chat(messages, request_settings)
-                return FunctionResult(function=function, value=result)
-            except Exception as exc:
-                logger.error(f"Error occurred while invoking function {function.name}: {exc}")
-                raise exc
-
-        async def _local_stream_func(
-            function: KernelFunctionMetadata,
-            kernel: "Kernel",
-            client: AIServiceClientBase,
-            request_settings: PromptExecutionSettings,
-            arguments: KernelArguments,
-            **kwargs: Dict[str, Any],
-        ) -> AsyncIterable[Union[FunctionResult, List[Union[StreamingKernelContent, Any]]]]:
-            if client is None:
-                raise ValueError("AI LLM service cannot be `None`")
-
-            try:
-                if function_config.has_chat_prompt:
-                    messages = await function_config.prompt_template.render_messages(kernel, arguments)
-                    async for partial_content in client.complete_chat_stream(
-                        messages=messages, settings=request_settings
-                    ):
-                        yield partial_content
-                else:
-                    prompt = await function_config.prompt_template.render(kernel, arguments)
-                    async for partial_content in client.complete_stream(prompt, request_settings):
-                        yield partial_content
-
-            except Exception as e:
-                logger.error(f"Error occurred while invoking function {function.name}: {e}")
-                raise e
-
-        semantic_function_params = [
-            KernelParameterMetadata(
-                name="function",
-                description="The function to execute",
-                default_value=None,
-                type="KernelFunctionMetadata",
-                required=True,
-                expose=False,
-            ),
-            KernelParameterMetadata(
-                name="kernel",
-                description="The kernel",
-                default_value=None,
-                type="Kernel",
-                required=True,
-                expose=False,
-            ),
-            KernelParameterMetadata(
-                name="client",
-                description="The AI service client",
-                default_value=None,
-                type="AIServiceClientBase",
-                required=True,
-                expose=False,
-            ),
-            KernelParameterMetadata(
-                name="request_settings",
-                description="The request settings",
-                default_value=None,
-                type="PromptExecutionSettings",
-                required=True,
-                expose=False,
-            ),
-            KernelParameterMetadata(
-                name="arguments",
-                description="The kernel arguments",
-                default_value=None,
-                type="KernelArguments",
-                required=True,
-                expose=False,
-            ),
-        ]
-        semantic_function_params.extend(function_config.prompt_template.get_parameters())
+        semantic_function_params: List[KernelParameterMetadata] = _get_kernel_parameter_metadata_from_config(function_config)
+        
         return KernelFunction(
             function_name=function_name,
             plugin_name=plugin_name,
             description=function_config.prompt_template_config.description,
-            function=_local_func,
+            function=partial(_invoke_completion, function_config=function_config),
             parameters=semantic_function_params,
             return_parameter=KernelParameterMetadata(
                 name="return",
@@ -338,10 +351,51 @@ class KernelFunction(KernelBaseModel):
                 type="FunctionResult",
                 required=True,
             ),
-            stream_function=_local_stream_func,
+            stream_function=partial(_invoke_stream_completion, function_config=function_config),
             is_semantic=True,
             chat_prompt_template=function_config.prompt_template if function_config.has_chat_prompt else None,
         )
+    
+    @staticmethod
+    def from_prompt_yaml(text: str, plugin_name: str, function_name: str) -> "KernelFunction":
+        """
+        Creates a KernelFunction instance from YAML text.
+
+        Args:
+            text (str): YAML representation of the SemanticFunctionConfig.
+            plugin_name (str): The name of the plugin.
+            function_name (str): The name of the function.
+
+        Returns:
+            KernelFunction: The kernel function.
+        """
+        # Convert YAML text to SemanticFunctionConfig object
+        function_config_data: Dict[str, Any] = yaml.safe_load(text)
+        function_config: SemanticFunctionConfig = SemanticFunctionConfig(**function_config_data)
+
+        if function_config is None:
+            raise ValueError("Function configuration cannot be `None`")
+        
+        semantic_function_params: List[KernelParameterMetadata] = _get_kernel_parameter_metadata_from_config(function_config)
+
+        return KernelFunction(
+            function_name=function_name,
+            plugin_name=plugin_name,
+            description=function_config.description,
+            function=partial(_invoke_completion, function_config=function_config),
+            parameters=semantic_function_params,
+            return_parameter=KernelParameterMetadata(
+                name="return",
+                description="The completion result",
+                default_value=None,
+                type="FunctionResult",
+                required=True,
+            ),
+            stream_function=partial(_invoke_stream_completion, function_config=function_config) if function_config.has_streaming else None,
+            is_semantic=True,
+            chat_prompt_template=function_config.prompt_template if function_config.has_chat_prompt else None,
+        )
+
 
     def set_default_plugin_collection(self, plugins: "KernelPluginCollection") -> "KernelFunction":
         self.plugins = plugins
