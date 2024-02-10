@@ -377,14 +377,15 @@ class KernelFunction(KernelBaseModel):
             raise ValueError("PromptTemplateConfig cannot be `None`")
         
         # semantic_function_params: List[KernelParameterMetadata] = _get_kernel_parameter_metadata_from_config(function_config)
-        prompt_template_config.parameters
+        plugin_name = None
+        function_name = None
 
         return KernelFunction(
             function_name=function_name,
             plugin_name=plugin_name,
-            description=function_config.description,
+            description=prompt_template_config.description,
             function=partial(_invoke_completion, function_config=function_config),
-            parameters=semantic_function_params,
+            parameters=prompt_template_config.parameters,
             return_parameter=KernelParameterMetadata(
                 name="return",
                 description="The completion result",
